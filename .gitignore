@@ -133,3 +133,6 @@ dmypy.json
 .project
 .pydevproject
 mains/data.json
+mains/data.csv
+
+mains/TopFoods/

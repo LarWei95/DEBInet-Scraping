@@ -10,6 +10,7 @@ import os
 import os.path as osp
 import json
 import traceback as tb
+import pandas as pd
 
 class WebScraper(object):
     @classmethod
@@ -75,6 +76,25 @@ class WebScraper(object):
         return all_data
     
     @classmethod
+    def unify_mass (cls, mass, unit):
+        # Normalize all convertable masses to g
+        mass = float(mass.strip().replace(",", "."))
+        
+        if unit is not None:
+            unit_binary = bytes(unit, "utf-8")
+            
+            if unit == "kg":
+                mass *= 1e3
+            elif unit == "mg":
+                mass /= 1e3
+            elif unit_binary == b'\xc2\xb5g':
+                mass /= 1e6
+            elif unit == "nm":
+                mass /= 1e9
+                
+        return mass
+    
+    @classmethod
     def parse_product_details (cls, html):
         details = html.find_all("div", {"class" : "panel-default"})
         
@@ -102,11 +122,11 @@ class WebScraper(object):
                     
                     if ingredient: ingredient = ingredient.strip()
                     
-                    if mass: mass = float(mass.strip().replace(",", "."))           
-                    
                     if unit: unit = unit.strip()
                     
-                    detail_stats[ingredient] = (mass, unit)
+                    if mass: mass = cls.unify_mass(mass, unit)
+                    
+                    detail_stats[ingredient] = mass
                     
             stats[heading] = detail_stats
             
@@ -130,9 +150,69 @@ class WebScraper(object):
         return all_data
     
     @classmethod
-    def get_saved_data (cls, path):
+    def get_saved_json_data (cls, path):
         with open(path, "r") as f:
             data = json.load(f)
             
         return data
+    
+    @classmethod
+    def get_saved_csv_data (cls, path):
+        index_cols = [0, 1]
+        col_indices = [0, 1]
         
+        df = pd.read_csv(path, sep=";", index_col=index_cols,
+                         header=col_indices)
+        return df
+    
+    @classmethod
+    def attributes_to_series (cls, attributes_dict):
+        new_attributes = {}
+        
+        for attribute_key in attributes_dict:
+            value = attributes_dict[attribute_key]
+                
+            new_attributes[attribute_key] = value
+        
+        return pd.Series(new_attributes)
+    
+    @classmethod
+    def json_to_pandas (cls, data):
+        used_cats = []
+        all_data = []
+        
+        for cat in data:
+            products = data[cat]
+            
+            new_cat_products = []
+            
+            for product in products:
+                stats = products[product]
+                
+                product_stats = []
+                
+                for stat_cat in stats:
+                    attributes = stats[stat_cat]
+                    
+                    new_attributes = cls.attributes_to_series(attributes)
+                    
+                    indx = new_attributes.index.values
+                    stat_cat_indx = np.repeat(stat_cat, len(indx))
+                    
+                    indx = pd.MultiIndex.from_arrays([stat_cat_indx, indx], names=["Category", "Ingredient"])
+                    new_attributes.index = indx
+                    
+                    product_stats.append(new_attributes)
+                
+                product_stats = pd.concat(product_stats).to_frame(product)
+                new_cat_products.append(product_stats)
+            
+            if len(new_cat_products) != 0:
+                new_cat_products = pd.concat(new_cat_products, axis=1)
+                new_cat_products = new_cat_products.transpose()
+                
+                used_cats.append(cat)
+                all_data.append(new_cat_products)
+            
+        all_data = pd.concat(all_data, keys=used_cats)
+        return all_data
